@@ -1,5 +1,6 @@
-# python-ci.yml
-name: Test API on Push
+# .github/workflows/python-ci.yml
+
+name: Test API and Deploy on Push
 
 on:
   push:
@@ -9,72 +10,72 @@ on:
 
 jobs:
   build-and-run-pytest:
-
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Checkout to the branch that triggered the event
-    - uses: actions/checkout@v3
+      # 1. Checkout to the branch that triggered the event
+      - uses: actions/checkout@v3
 
-    # 2. Install python 3.10
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v2
-      with:
-        python-version: "3.10"
+      # 2. Install python 3.10
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.10"
 
-    # 3. Install python packages using a requirements file
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip cython wheel
-        pip install -r tests/requirements.txt
+      # 3. Install python packages using a requirements file
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip cython wheel
+          pip install -r tests/requirements.txt
 
-    # 4. Build test image
-    - name: Build test Docker image
-      run: docker build -f tests/Dockerfile.test -t api-test .
+      # 4. Build test image
+      - name: Build test Docker image
+        run: docker build -f tests/Dockerfile.test -t api-test .
 
-    # 5. Run test container
-    - name: Run testing Container
-      run: docker run -d -e PORT=8000 --name api-test-container -p 8080:8000 api-test
+      # 5. Run test container
+      - name: Run testing container
+        run: docker run -d -e PORT=8000 --name api-test-container -p 8080:8000 api-test
 
-    # 6. Run tests
-    - name: Run tests on API
-      run: make
+      # 6. Run tests
+      - name: Run tests on API
+        run: make
 
-    # Last step: Stop and remove container
-    - name: Stop API Container
-      run: docker stop api-test-container && docker rm api-test-container
+      # 7. Stop and remove container
+      - name: Stop API Container
+        run: docker stop api-test-container && docker rm api-test-container
 
-  # Deploy to Google Cloud Run
   deploy:
     needs: build-and-run-pytest  # ✅ Waits for tests to pass
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Google Cloud SDK
-      uses: google-github-actions/setup-gcloud@v1
-      with:
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
-        export_default_credentials: true
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
 
-    - name: Configure Docker for Artifact Registry
-      run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
+      - name: Authenticate Docker with Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
-    - name: Build Docker image
-      run: |
-        IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ci-cd-example/ci-cd-example-deployment:latest"
-        docker build -t $IMAGE .
-        docker push $IMAGE
-        echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+      - name: Verify active credentials (debug)
+        run: gcloud auth list
 
-    - name: Deploy to Cloud Run
-      run: |
-        gcloud run deploy \
-          --image $IMAGE \
-          --platform managed \
-          --region ${{ secrets.GCP_REGION }} \
-          --allow-unauthenticated
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ci-cd-example/ci-cd-example-deployment:latest"
+          docker build -t $IMAGE .
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ci-cd-example-deployment \
+            --image $IMAGE \
+            --platform managed \
+            --region ${{ secrets.GCP_REGION }} \
+            --allow-unauthenticated
